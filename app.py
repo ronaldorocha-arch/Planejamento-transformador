@@ -37,7 +37,6 @@ def carregar_dados_upt(upt_nome):
                 capacidades = {}
                 for n_val, col_idx in MAPA_N.items():
                     if col_idx < num_cols:
-                        # AJUSTE AQUI: Substitui vírgula por ponto antes de converter para número
                         val_str = df_raw.iloc[i, col_idx].replace(',', '.')
                         val = pd.to_numeric(val_str, errors='coerce')
                         capacidades[n_val] = val
@@ -57,20 +56,40 @@ def gerar_grade(h_ini_str, tem_gin):
     def p_min(h_s):
         h, m = map(int, h_s.split(':'))
         return h * 60 + m
+    
     m_ini = p_min(h_ini_str)
-    m_alm_ini, m_alm_fim = p_min("11:30"), p_min("12:30")
-    m_gin_ini, m_gin_fim = p_min("09:30"), p_min("09:40")
-    marcos = ["08:30", "09:30", "10:30", "11:30", "12:30", "13:30", "14:30", "15:30", "16:30", "17:30"]
-    pontos = [h_ini_str] + [m for m in marcos if p_min(m) > m_ini]
+    
+    # Definição dos Intervalos EXATOS conforme solicitado
+    pausas = [
+        {"nome": "☕ CAFÉ MANHÃ", "ini": "09:00", "fim": "09:10"},
+        {"nome": "🍱 ALMOÇO", "ini": "11:30", "fim": "12:30"},
+        {"nome": "☕ CAFÉ TARDE", "ini": "15:00", "fim": "15:10"}
+    ]
+    
+    if tem_gin:
+        pausas.append({"nome": "🤸 GINÁSTICA", "ini": "09:30", "fim": "09:40"})
+    
+    pausas = sorted(pausas, key=lambda x: p_min(x['ini']))
+
+    # Marcos de horário para quebra da tabela
+    marcos = ["08:30", "09:00", "09:10", "09:30", "09:40", "10:30", "11:30", "12:30", "13:30", "14:30", "15:00", "15:10", "16:30", "17:30"]
+    pontos = sorted(list(set([h_ini_str] + [m for m in marcos if p_min(m) > m_ini])), key=p_min)
+    
     grade = []
     for i in range(len(pontos)-1):
-        p1, p2 = p_min(pontos[i]), p_min(pontos[i+1])
-        if p1 >= m_alm_ini and p2 <= m_alm_fim:
-            grade.append({'Horário': f"{pontos[i]} – {pontos[i+1]}", 'Minutos': 0, 'Label': "🍱 ALMOÇO"})
+        p1_str, p2_str = pontos[i], pontos[i+1]
+        p1_m, p2_m = p_min(p1_str), p_min(p2_str)
+        
+        label_pausa = None
+        for pausa in pausas:
+            if p1_m >= p_min(pausa["ini"]) and p2_m <= p_min(pausa["fim"]):
+                label_pausa = pausa["nome"]
+                break
+        
+        if label_pausa:
+            grade.append({'Horário': f"{p1_str} – {p2_str}", 'Minutos': 0, 'Label': label_pausa})
         else:
-            minutos = p2 - p1
-            if tem_gin and p1 <= m_gin_ini < p2: minutos -= 10
-            grade.append({'Horário': f"{pontos[i]} – {pontos[i+1]}", 'Minutos': minutos, 'Label': None})
+            grade.append({'Horário': f"{p1_str} – {p2_str}", 'Minutos': p2_m - p1_m, 'Label': None})
     return grade
 
 # --- INTERFACE ---
@@ -124,7 +143,6 @@ if dados:
                             if q > 0:
                                 acum -= (q * item['T_PC']); item['Qtd'] -= q
                                 p_bloco += q; tot += q
-                                # Juntamos Modelo + Unidade Hora (agora aceitando decimais)
                                 info_modelo = f"{item['ID']} ({item['UH']} pç/h)"
                                 if info_modelo not in mods_bloco: mods_bloco.append(info_modelo)
                             
