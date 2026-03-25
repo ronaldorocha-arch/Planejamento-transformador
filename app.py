@@ -28,11 +28,9 @@ def carregar_dados_upt(upt_nome):
         df_raw = pd.read_csv(url, header=None, skiprows=2).astype(str)
         lista_modelos = []
         num_cols = df_raw.shape[1]
-        
         for i in range(len(df_raw)):
             modelo = df_raw.iloc[i, 1].strip()
             desc = df_raw.iloc[i, 2].strip()
-            
             if modelo != 'nan' and len(modelo) > 3:
                 capacidades = {}
                 for n_val, col_idx in MAPA_N.items():
@@ -42,12 +40,7 @@ def carregar_dados_upt(upt_nome):
                         capacidades[n_val] = val
                     else:
                         capacidades[n_val] = None
-                
-                lista_modelos.append({
-                    'ID': modelo,
-                    'CAPACIDADES': capacidades,
-                    'DISPLAY': f"{modelo} - {desc}"
-                })
+                lista_modelos.append({'ID': modelo, 'CAPACIDADES': capacidades, 'DISPLAY': f"{modelo} - {desc}"})
         return lista_modelos
     except:
         return None
@@ -58,75 +51,57 @@ def gerar_grade(h_ini_str, tem_gin):
         return h * 60 + m
     
     m_ini = p_min(h_ini_str)
-    
-    # Definição dos Intervalos EXATOS conforme solicitado
     pausas = [
         {"nome": "☕ CAFÉ MANHÃ", "ini": "09:00", "fim": "09:10"},
         {"nome": "🍱 ALMOÇO", "ini": "11:30", "fim": "12:30"},
         {"nome": "☕ CAFÉ TARDE", "ini": "15:00", "fim": "15:10"}
     ]
-    
     if tem_gin:
         pausas.append({"nome": "🤸 GINÁSTICA", "ini": "09:30", "fim": "09:40"})
     
-    pausas = sorted(pausas, key=lambda x: p_min(x['ini']))
-
-    # Marcos de horário para quebra da tabela
-    marcos = ["08:30", "09:00", "09:10", "09:30", "09:40", "10:30", "11:30", "12:30", "13:30", "14:30", "15:00", "15:10", "16:30", "17:30"]
+    pausas = sorted([p for p in pausas if p_min(p['ini']) >= m_ini], key=lambda x: p_min(x['ini']))
+    
+    marcos = ["08:30", "09:30", "10:30", "11:30", "12:30", "13:30", "14:30", "15:30", "16:30", "17:30"]
+    # Adiciona apenas os inícios e fins das pausas para não "quebrar" o visual
+    for p in pausas:
+        marcos.extend([p['ini'], p['fim']])
+    
     pontos = sorted(list(set([h_ini_str] + [m for m in marcos if p_min(m) > m_ini])), key=p_min)
     
     grade = []
     for i in range(len(pontos)-1):
-        p1_str, p2_str = pontos[i], pontos[i+1]
-        p1_m, p2_m = p_min(p1_str), p_min(p2_str)
-        
-        label_pausa = None
-        for pausa in pausas:
-            if p1_m >= p_min(pausa["ini"]) and p2_m <= p_min(pausa["fim"]):
-                label_pausa = pausa["nome"]
-                break
-        
-        if label_pausa:
-            grade.append({'Horário': f"{p1_str} – {p2_str}", 'Minutos': 0, 'Label': label_pausa})
-        else:
-            grade.append({'Horário': f"{p1_str} – {p2_str}", 'Minutos': p2_m - p1_m, 'Label': None})
+        p1_s, p2_s = pontos[i], pontos[i+1]
+        p1_m, p2_m = p_min(p1_s), p_min(p2_s)
+        label = next((p['nome'] for p in pausas if p1_m >= p_min(p['ini']) and p2_m <= p_min(p['fim'])), None)
+        grade.append({'Horário': f"{p1_s} – {p2_s}", 'Minutos': 0 if label else p2_m - p1_m, 'Label': label})
     return grade
 
 # --- INTERFACE ---
 st.sidebar.title("🏭 Planejamento UPT")
 sel_upt = st.sidebar.selectbox("Setor", list(GIDS.keys()))
-n_dia = st.sidebar.select_slider("Quantidade de Pessoas (N)", options=[1, 2, 3, 4, 5, 6], value=4)
-h_inicio = st.sidebar.text_input("Início da Produção", "07:45")
-tem_gin = st.sidebar.checkbox("Haverá Ginástica Laboral?", value=False)
+n_dia = st.sidebar.select_slider("Pessoas (N)", options=[1, 2, 3, 4, 5, 6], value=4)
+h_inicio = st.sidebar.text_input("Início", "07:45")
+tem_gin = st.sidebar.checkbox("Ginástica Laboral?")
 
 dados = carregar_dados_upt(sel_upt)
 
 if dados:
     st.header(f"📋 Programação {sel_upt} | N={n_dia}")
-    df_input = st.data_editor(
-        pd.DataFrame(columns=["Modelo", "Quantidade"]),
-        num_rows="dynamic", use_container_width=True,
-        column_config={
-            "Modelo": st.column_config.SelectboxColumn("Modelo", options=[m['DISPLAY'] for m in dados], required=True),
-            "Quantidade": st.column_config.NumberColumn("Qtd", min_value=1)
-        }, key=f"ed_{sel_upt}"
-    )
+    df_input = st.data_editor(pd.DataFrame(columns=["Modelo", "Quantidade"]), num_rows="dynamic", use_container_width=True,
+        column_config={"Modelo": st.column_config.SelectboxColumn("Modelo", options=[m['DISPLAY'] for m in dados], required=True),
+                       "Quantidade": st.column_config.NumberColumn("Qtd", min_value=1)}, key=f"ed_{sel_upt}")
 
     if st.button("🚀 Gerar Planejamento"):
         if not df_input.empty:
             grade_slots = gerar_grade(h_inicio, tem_gin)
             fila = []
-            erro_unidade = False
             for _, row in df_input.iterrows():
                 if row['Modelo']:
                     m_obj = next(m for m in dados if m['DISPLAY'] == row['Modelo'])
                     uh = m_obj['CAPACIDADES'].get(n_dia)
-                    if pd.isna(uh) or uh is None or uh <= 0:
-                        st.error(f"❌ Modelo {m_obj['ID']} sem Unidade/Hora para N={n_dia}!")
-                        erro_unidade = True; break
-                    fila.append({'ID': m_obj['ID'], 'UH': uh, 'T_PC': 60 / uh, 'Qtd': row['Quantidade']})
+                    if uh and uh > 0: fila.append({'ID': m_obj['ID'], 'UH': uh, 'T_PC': 60 / uh, 'Qtd': row['Quantidade']})
             
-            if not erro_unidade:
+            if fila:
                 res, idx, acum, tot = [], 0, 0.0, 0
                 total_pecas = sum(item['Qtd'] for item in fila)
                 hora_termino = ""
@@ -143,27 +118,21 @@ if dados:
                             if q > 0:
                                 acum -= (q * item['T_PC']); item['Qtd'] -= q
                                 p_bloco += q; tot += q
-                                info_modelo = f"{item['ID']} ({item['UH']} pç/h)"
-                                if info_modelo not in mods_bloco: mods_bloco.append(info_modelo)
-                            
+                                info = f"{item['ID']} ({item['UH']} pç/h)"
+                                if info not in mods_bloco: mods_bloco.append(info)
                             if tot >= total_pecas and hora_termino == "":
-                                min_u = s['Minutos'] - acum
+                                m_u = s['Minutos'] - acum
                                 h_s, m_s = s['Horário'].split(' – ')[0].split(':')
-                                hora_termino = (datetime.strptime(f"{h_s}:{m_s}", "%H:%M") + timedelta(minutes=min_u)).strftime("%H:%M")
+                                hora_termino = (datetime.strptime(f"{h_s}:{m_s}", "%H:%M") + timedelta(minutes=m_u)).strftime("%H:%M")
                             if item['Qtd'] <= 0: idx += 1
                             else: break
                         else: break
-                    res.append({
-                        'Horário': s['Horário'], 
-                        'Modelos': " + ".join(mods_bloco) if mods_bloco else "-", 
-                        'Peças': int(p_bloco), 
-                        'Acum.': int(tot)
-                    })
+                    res.append({'Horário': s['Horário'], 'Modelos': " + ".join(mods_bloco) if mods_bloco else "-", 'Peças': int(p_bloco), 'Acum.': int(tot)})
                 
                 st.divider()
                 c1, c2 = st.columns(2)
-                c1.metric("Total Planejado", f"{tot} peças")
-                c2.metric("Previsão de Término", hora_termino if hora_termino else "Fora do turno")
+                c1.metric("Total", f"{tot} peças")
+                c2.metric("Término", hora_termino if hora_termino else "Fora do turno")
                 st.dataframe(pd.DataFrame(res), use_container_width=True)
 else:
-    st.warning("Verifique o compartilhamento da planilha no Google Sheets.")
+    st.warning("Aguardando planilha...")
