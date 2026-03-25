@@ -17,30 +17,29 @@ GIDS = {
     "UPT-07": "1486862820",
 }
 
-# B=1(Modelo), C=2(Desc), D=3(N1), E=4(N2), F=5(N3), G=6(N4), H=7(N5)
-MAPA_N = {1: 3, 2: 4, 3: 5, 4: 6, 5: 7}
+# Mapeamento atualizado conforme imagem 'a.png': 
+# D=3(N1), E=4(N2), F=5(N3), G=6(N4), H=7(N5), I=8(N6)
+MAPA_N = {1: 3, 2: 4, 3: 5, 4: 6, 5: 7, 6: 8}
 
-@st.cache_data(ttl=60)
+@st.cache_data(ttl=20)
 def carregar_dados_upt(upt_nome):
     gid = GIDS.get(upt_nome, "0")
-    # Link de exportação CSV forçado
     url = f"https://docs.google.com/spreadsheets/d/1A5Rnbey8-kfXRdP7vOIq4rS3DTQlERHItsS1gbg53W0/export?format=csv&gid={gid}"
     try:
-        # Lendo com tratamento de erro para colunas inexistentes
-        df_raw = pd.read_csv(url, header=None, skiprows=2)
+        # skiprows=2 para começar os dados na linha 3 (abaixo do cabeçalho)
+        df_raw = pd.read_csv(url, header=None, skiprows=2).astype(str)
         lista_modelos = []
-        
-        num_colunas = df_raw.shape[1]
+        num_cols_planilha = df_raw.shape[1]
         
         for i in range(len(df_raw)):
-            modelo = str(df_raw.iloc[i, 1]).strip()
-            desc = str(df_raw.iloc[i, 2]).strip()
+            modelo = df_raw.iloc[i, 1].strip() # Coluna B
+            desc = df_raw.iloc[i, 2].strip()   # Coluna C
             
             if modelo != 'nan' and len(modelo) > 3:
                 capacidades = {}
                 for n_val, col_idx in MAPA_N.items():
-                    # SÓ TENTA ACESSAR SE A COLUNA EXISTIR NA ABA
-                    if col_idx < num_colunas:
+                    # Verifica se a coluna existe na aba para evitar erro 'out of bounds'
+                    if col_idx < num_cols_planilha:
                         val = pd.to_numeric(df_raw.iloc[i, col_idx], errors='coerce')
                         capacidades[n_val] = val
                     else:
@@ -53,7 +52,7 @@ def carregar_dados_upt(upt_nome):
                 })
         return lista_modelos
     except Exception as e:
-        st.error(f"Erro ao acessar {upt_nome}: {e}")
+        st.error(f"Erro ao conectar com a aba {upt_nome}: {e}")
         return None
 
 def gerar_grade(h_ini_str, tem_gin):
@@ -79,7 +78,7 @@ def gerar_grade(h_ini_str, tem_gin):
 # --- INTERFACE ---
 st.sidebar.title("🏭 Planejamento UPT")
 sel_upt = st.sidebar.selectbox("Setor", list(GIDS.keys()))
-n_dia = st.sidebar.select_slider("Quantidade de Pessoas (N)", options=[1, 2, 3, 4, 5], value=4)
+n_dia = st.sidebar.select_slider("Quantidade de Pessoas (N)", options=[1, 2, 3, 4, 5, 6], value=4)
 h_inicio = st.sidebar.text_input("Início da Produção", "07:45")
 tem_gin = st.sidebar.checkbox("Haverá Ginástica Laboral?", value=False)
 
@@ -107,7 +106,7 @@ if dados:
                     m_obj = next(m for m in dados if m['DISPLAY'] == row['Modelo'])
                     uh = m_obj['CAPACIDADES'].get(n_dia)
                     if pd.isna(uh) or uh is None or uh <= 0:
-                        st.error(f"❌ Modelo {m_obj['ID']} sem Unidade/Hora para N={n_dia} na aba {sel_upt}!")
+                        st.error(f"❌ Modelo {m_obj['ID']} sem Unidade/Hora para N={n_dia}!")
                         erro_unidade = True
                         break
                     fila.append({'ID': m_obj['ID'], 'UH': uh, 'T_PC': 60 / uh, 'Qtd': row['Quantidade']})
@@ -118,10 +117,10 @@ if dados:
                 hora_termino = ""
                 for s in grade_slots:
                     if s['Label']:
-                        res.append({'Horário': s['Horário'], 'Modelos': s['Label'], 'Peças': 0, 'Acum.': tot})
+                        res.append({'Horário': s['Horário'], 'Modelos': s['Label'], 'Unid/h': '-', 'Peças': 0, 'Acum.': tot})
                         continue
                     acum += s['Minutos']
-                    p_bloco, mods_bloco = 0, []
+                    p_bloco, mods_bloco, uh_info = 0, [], []
                     while idx < len(fila):
                         item = fila[idx]
                         if acum >= item['T_PC']:
@@ -129,7 +128,9 @@ if dados:
                             if q > 0:
                                 acum -= (q * item['T_PC']); item['Qtd'] -= q
                                 p_bloco += q; tot += q
-                                if item['ID'] not in mods_bloco: mods_bloco.append(item['ID'])
+                                if item['ID'] not in mods_bloco: 
+                                    mods_bloco.append(item['ID'])
+                                    uh_info.append(f"{item['ID']}: {item['UH']}pç/h")
                             if tot >= total_pecas and hora_termino == "":
                                 min_u = s['Minutos'] - acum
                                 h_s, m_s = s['Horário'].split(' – ')[0].split(':')
@@ -137,11 +138,18 @@ if dados:
                             if item['Qtd'] <= 0: idx += 1
                             else: break
                         else: break
-                    res.append({'Horário': s['Horário'], 'Modelos': " + ".join(mods_bloco) if mods_bloco else "-", 'Peças': int(p_bloco), 'Acum.': int(tot)})
+                    res.append({
+                        'Horário': s['Horário'], 
+                        'Modelos': " + ".join(mods_bloco) if mods_bloco else "-", 
+                        'Unid/h': " | ".join(uh_info) if uh_info else "-",
+                        'Peças': int(p_bloco), 
+                        'Acum.': int(tot)
+                    })
                 
                 st.divider()
-                st.metric("Total Planejado", f"{tot} peças")
-                if hora_termino: st.metric("Previsão de Término", hora_termino)
+                c1, c2 = st.columns(2)
+                c1.metric("Total Planejado", f"{tot} peças")
+                c2.metric("Previsão de Término", hora_termino if hora_termino else "Fora do turno")
                 st.dataframe(pd.DataFrame(res), use_container_width=True)
 else:
-    st.warning("Aguardando carregamento da planilha... Verifique se o compartilhamento está como 'Qualquer pessoa com o link'.")
+    st.warning("Verifique se a planilha está como 'Qualquer pessoa com o link' e se as colunas de N1 a N6 existem.")
