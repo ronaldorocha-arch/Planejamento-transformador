@@ -6,175 +6,144 @@ from datetime import datetime, timedelta
 # Configuração da página
 st.set_page_config(page_title="Planejamento UPT - NHS", page_icon="⚡", layout="wide")
 
-# --- 1. CONFIGURAÇÃO DE GIDs (IDs das ABAS) ---
-# Você deve clicar em cada aba na sua planilha e copiar o número final da URL (gid=...)
+# --- 1. CONFIGURAÇÃO DE GIDs ---
 GIDS = {
     "UPT-01": "1479604323",
-    "UPT-02": "0",  # <--- Troque pelo GID real da aba UPT-02
-    "UPT-03": "0",  # <--- Troque pelo GID real da aba UPT-03
-    "UPT-04": "0",
-    "UPT-05": "0",
-    "UPT-06": "0",
-    "UPT-07": "0",
+    "UPT-02": "1369527749",
+    "UPT-03": "1940176840",
+    "UPT-04": "1346066224",
+    "UPT-05": "1734891122",
+    "UPT-06": "578135831",
+    "UPT-07": "1534015694",
 }
 
-# Mapeamento das colunas de capacidade (N) conforme imagem 8282.png
-# Colunas: B=1(Modelo), C=2(Desc), D=3(N1), E=4(N2), F=5(N3), G=6(N4), H=7(N5)
 MAPA_N = {1: 3, 2: 4, 3: 5, 4: 6, 5: 7}
 
-@st.cache_data(ttl=10)
+@st.cache_data(ttl=20)
 def carregar_dados_upt(upt_nome):
     gid = GIDS.get(upt_nome, "0")
-    # Link de exportação CSV do Google Sheets
     url = f"https://docs.google.com/spreadsheets/d/1A5Rnbey8-kfXRdP7vOIq4rS3DTQlERHItsS1gbg53W0/export?format=csv&gid={gid}"
     try:
-        # Lê a planilha pulando as 2 primeiras linhas (skiprows=2 para começar na linha 3)
         df_raw = pd.read_csv(url, header=None, skiprows=2).astype(str)
         lista_modelos = []
-        
         for i in range(len(df_raw)):
-            modelo = df_raw.iloc[i, 1].strip() # Coluna B
-            desc = df_raw.iloc[i, 2].strip()   # Coluna C
-            
-            if modelo != 'nan' and len(modelo) > 2:
-                # Armazena capacidades de N1 a N5
-                capacidades = {}
-                for n_val, col_idx in MAPA_N.items():
-                    val = pd.to_numeric(df_raw.iloc[i, col_idx], errors='coerce')
-                    capacidades[n_val] = val
-                
-                lista_modelos.append({
-                    'ID': modelo,
-                    'DESCRICAO': desc,
-                    'CAPACIDADES': capacidades,
-                    'DISPLAY': f"{modelo} - {desc}"
-                })
+            modelo = df_raw.iloc[i, 1].strip()
+            desc = df_raw.iloc[i, 2].strip()
+            if modelo != 'nan' and len(modelo) > 3:
+                caps = {n: pd.to_numeric(df_raw.iloc[i, col], errors='coerce') for n, col in MAPA_N.items()}
+                lista_modelos.append({'ID': modelo, 'CAPACIDADES': caps, 'DISPLAY': f"{modelo} - {desc}"})
         return lista_modelos
-    except Exception as e:
-        st.error(f"Erro ao conectar com a aba {upt_nome}: {e}")
-        return []
+    except: return []
 
-def gerar_grade_horaria(h_ini_str):
-    def para_min(h_s):
+def gerar_grade(h_ini_str, tem_ginastica):
+    def p_min(h_s):
         h, m = map(int, h_s.split(':'))
         return h * 60 + m
 
-    m_ini = para_min(h_ini_str)
-    m_almoco_ini = para_min("11:30")
-    m_almoco_fim = para_min("12:30")
+    m_ini = p_min(h_ini_str)
+    m_alm_ini, m_alm_fim = p_min("11:30"), p_min("12:30")
+    m_gin_ini, m_gin_fim = p_min("09:30"), p_min("09:40")
     
-    # Horários de corte para a tabela
     marcos = ["08:30", "09:30", "10:30", "11:30", "12:30", "13:30", "14:30", "15:30", "16:30", "17:30"]
-    pontos = [h_ini_str] + [m for m in marcos if para_min(m) > m_ini]
+    pontos = [h_ini_str] + [m for m in marcos if p_min(m) > m_ini]
     
     grade = []
     for i in range(len(pontos)-1):
-        p1, p2 = para_min(pontos[i]), para_min(pontos[i+1])
-        if p1 >= m_almoco_ini and p2 <= m_almoco_fim:
+        p1, p2 = p_min(pontos[i]), p_min(pontos[i+1])
+        if p1 >= m_alm_ini and p2 <= m_alm_fim:
             grade.append({'Horário': f"{pontos[i]} – {pontos[i+1]}", 'Minutos': 0, 'Label': "🍱 ALMOÇO"})
         else:
-            # Cálculo de minutos úteis (pode-se adicionar descontos de café aqui)
-            minutos = p2 - p1
-            grade.append({'Horário': f"{pontos[i]} – {pontos[i+1]}", 'Minutos': minutos, 'Label': None})
+            minutos_uteis = p2 - p1
+            # Desconto da Ginástica se estiver no intervalo
+            if tem_ginastica and p1 <= m_gin_ini < p2:
+                minutos_uteis -= 10
+            grade.append({'Horário': f"{pontos[i]} – {pontos[i+1]}", 'Minutos': minutos_uteis, 'Label': None})
     return grade
 
 # --- INTERFACE ---
-st.sidebar.title("🏭 Planejamento UPT")
-sel_upt = st.sidebar.selectbox("Selecionar Setor", list(GIDS.keys()))
-n_selecionado = st.sidebar.select_slider("Quantidade de Pessoas (N)", options=[1, 2, 3, 4, 5], value=4)
+st.sidebar.title("🏭 UPT - Planejamento")
+sel_upt = st.sidebar.selectbox("Setor", list(GIDS.keys()))
+n_dia = st.sidebar.select_slider("Quantidade de Pessoas (N)", options=[1, 2, 3, 4, 5], value=4)
 h_inicio = st.sidebar.text_input("Início da Produção", "07:45")
+tem_gin = st.sidebar.checkbox("Haverá Ginástica Laboral? (09:30)")
 
-# Carregar dados da aba selecionada
-dados_modelos = carregar_dados_upt(sel_upt)
+dados = carregar_dados_upt(sel_upt)
 
-if dados_modelos:
-    st.header(f"📋 Programação {sel_upt}")
-    st.info(f"Capacidade baseada em **N={n_selecionado}**")
+if dados:
+    st.header(f"📋 Programação {sel_upt} | N={n_dia}")
     
-    # Seleção de Modelos e Quantidades
-    opcoes_display = [m['DISPLAY'] for m in dados_modelos]
     df_input = st.data_editor(
         pd.DataFrame(columns=["Modelo", "Quantidade"]),
-        num_rows="dynamic",
-        use_container_width=True,
+        num_rows="dynamic", use_container_width=True,
         column_config={
-            "Modelo": st.column_config.SelectboxColumn("Modelo", options=opcoes_display, required=True),
+            "Modelo": st.column_config.SelectboxColumn("Modelo", options=[m['DISPLAY'] for m in dados], required=True),
             "Quantidade": st.column_config.NumberColumn("Qtd", min_value=1)
-        },
-        key=f"editor_{sel_upt}"
+        }, key=f"ed_{sel_upt}"
     )
 
     if st.button("🚀 Gerar Planejamento"):
         if not df_input.empty:
-            grade = gerar_grade_horaria(h_inicio)
-            fila_producao = []
-            erro_unidade = False
+            grade_slots = gerar_grade(h_inicio, tem_gin)
+            fila, erro_unidade = [], False
             
-            # Validação e Preparação da Fila
             for _, row in df_input.iterrows():
                 if row['Modelo']:
-                    mod_obj = next(m for m in dados_modelos if m['DISPLAY'] == row['Modelo'])
-                    unid_h = mod_obj['CAPACIDADES'].get(n_selecionado)
-                    
-                    if pd.isna(unid_h) or unid_h <= 0:
-                        st.error(f"❌ Erro: O modelo **{mod_obj['ID']}** não tem Unidade/Hora cadastrada para **N={n_selecionado}** na aba {sel_upt}!")
-                        erro_unidade = True
-                        break
-                    
-                    fila_producao.append({
-                        'ID': mod_obj['ID'],
-                        'T_PC': 60 / unid_h,
-                        'Qtd': row['Quantidade']
-                    })
+                    m_obj = next(m for m in dados if m['DISPLAY'] == row['Modelo'])
+                    uh = m_obj['CAPACIDADES'].get(n_dia)
+                    if pd.isna(uh) or uh <= 0:
+                        st.error(f"❌ Modelo {m_obj['ID']} sem Unidade/Hora para N={n_dia}!"); erro_unidade = True; break
+                    fila.append({'ID': m_obj['ID'], 'UH': uh, 'T_PC': 60 / uh, 'Qtd': row['Quantidade']})
             
             if not erro_unidade:
-                resultados = []
-                idx_fila = 0
-                acum_min = 0.0
-                tot_geral = 0
-                
-                for slot in grade:
-                    if slot['Label']:
-                        resultados.append({'Horário': slot['Horário'], 'Modelos': slot['Label'], 'Peças': 0, 'Acumulada': tot_geral})
+                res, idx, acum, tot = [], 0, 0.0, 0
+                total_pecas_pedidas = sum(item['Qtd'] for item in fila)
+                hora_termino = ""
+
+                for s in grade_slots:
+                    if s['Label']:
+                        res.append({'Horário': s['Horário'], 'Modelos': s['Label'], 'Unid/h': '-', 'Peças': 0, 'Acum.': tot})
                         continue
                     
-                    minutos_bloco = slot['Minutos']
-                    acum_min += minutos_bloco
-                    p_no_bloco = 0
-                    mods_no_bloco = []
+                    acum += s['Minutos']
+                    p_bloco, mods_bloco, uh_bloco = 0, [], []
                     
-                    while idx_fila < len(fila_producao):
-                        item = fila_producao[idx_fila]
-                        if acum_min >= item['T_PC']:
-                            # Calcula quantas peças cabem no tempo acumulado
-                            q = min(math.floor(acum_min / item['T_PC']), item['Qtd'])
+                    while idx < len(fila):
+                        item = fila[idx]
+                        if acum >= item['T_PC']:
+                            q = min(math.floor(acum / item['T_PC']), item['Qtd'])
                             if q > 0:
-                                acum_min -= (q * item['T_PC'])
+                                acum -= (q * item['T_PC'])
                                 item['Qtd'] -= q
-                                p_no_bloco += q
-                                tot_geral += q
-                                if f"{item['ID']}" not in " ".join(mods_no_bloco):
-                                    mods_no_bloco.append(f"{item['ID']}")
+                                p_bloco += q
+                                tot += q
+                                if item['ID'] not in mods_bloco: 
+                                    mods_bloco.append(item['ID'])
+                                    uh_bloco.append(f"{item['ID']}: {item['UH']}pç/h")
                             
-                            if item['Qtd'] <= 0:
-                                idx_fila += 1
-                            else:
-                                break
-                        else:
-                            break
+                            # Cálculo do horário de término exato
+                            if tot >= total_pecas_pedidas and hora_termino == "":
+                                min_passados = s['Minutos'] - acum
+                                h_s, m_s = s['Horário'].split(' – ')[0].split(':')
+                                hora_termino = (datetime.strptime(f"{h_s}:{m_s}", "%H:%M") + timedelta(minutes=min_passados)).strftime("%H:%M")
+                            
+                            if item['Qtd'] <= 0: idx += 1
+                            else: break
+                        else: break
                     
-                    resultados.append({
-                        'Horário': slot['Horário'],
-                        'Modelos': " + ".join(mods_no_bloco) if mods_no_bloco else "-",
-                        'Peças': int(p_no_bloco),
-                        'Acumulada': int(tot_geral)
+                    res.append({
+                        'Horário': s['Horário'], 
+                        'Modelos': " + ".join(mods_bloco) if mods_bloco else "-", 
+                        'Unid/h': " | ".join(uh_bloco) if uh_bloco else "-",
+                        'Peças': int(p_bloco), 
+                        'Acum.': int(tot)
                     })
                 
                 st.divider()
+                c1, c2 = st.columns(2)
+                c1.metric("Total Planejado", f"{tot} peças")
+                c2.metric("Previsão de Término", hora_termino if hora_termino else "Além das 17:30")
+                
                 st.subheader("🗓️ Cronograma de Produção")
-                st.dataframe(pd.DataFrame(resultados), use_container_width=True)
-                st.success(f"Planejamento concluído: {tot_geral} peças no total.")
-        else:
-            st.warning("Adicione pelo menos um modelo e quantidade.")
+                st.dataframe(pd.DataFrame(res), use_container_width=True)
 else:
-    st.error("Não foi possível carregar os dados. Verifique o compartilhamento da planilha e os GIDs das abas.")
+    st.error("Erro ao carregar dados. Verifique o compartilhamento da planilha.")
