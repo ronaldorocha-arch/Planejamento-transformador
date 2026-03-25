@@ -17,7 +17,7 @@ GIDS = {
     "UPT-07": "1486862820",
 }
 
-# Mapeamento: D=3(N1), E=4(N2), F=5(N3), G=6(N4), H=7(N5), I=8(N6)
+# Mapeamento: D=3(N1) até I=8(N6)
 MAPA_N = {1: 3, 2: 4, 3: 5, 4: 6, 5: 7, 6: 8}
 
 @st.cache_data(ttl=20)
@@ -51,19 +51,20 @@ def gerar_grade(h_ini_str, tem_gin):
         return h * 60 + m
     
     m_ini = p_min(h_ini_str)
-    pausas = [
-        {"nome": "☕ CAFÉ MANHÃ", "ini": "09:00", "fim": "09:10"},
-        {"nome": "🍱 ALMOÇO", "ini": "11:30", "fim": "12:30"},
-        {"nome": "☕ CAFÉ TARDE", "ini": "15:00", "fim": "15:10"}
-    ]
-    if tem_gin:
-        pausas.append({"nome": "🤸 GINÁSTICA", "ini": "09:30", "fim": "09:40"})
     
-    pausas = sorted([p for p in pausas if p_min(p['ini']) >= m_ini], key=lambda x: p_min(x['ini']))
+    # Pausas invisíveis (apenas descontam tempo)
+    cafes = [
+        {"ini": "09:00", "fim": "09:10"},
+        {"ini": "15:00", "fim": "15:10"}
+    ]
+    
+    # Pausas visíveis na tabela
+    pausas_v = [{"nome": "🍱 ALMOÇO", "ini": "11:30", "fim": "12:30"}]
+    if tem_gin:
+        pausas_v.append({"nome": "🤸 GINÁSTICA", "ini": "09:30", "fim": "09:40"})
     
     marcos = ["08:30", "09:30", "10:30", "11:30", "12:30", "13:30", "14:30", "15:30", "16:30", "17:30"]
-    # Adiciona apenas os inícios e fins das pausas para não "quebrar" o visual
-    for p in pausas:
+    for p in pausas_v:
         marcos.extend([p['ini'], p['fim']])
     
     pontos = sorted(list(set([h_ini_str] + [m for m in marcos if p_min(m) > m_ini])), key=p_min)
@@ -72,8 +73,21 @@ def gerar_grade(h_ini_str, tem_gin):
     for i in range(len(pontos)-1):
         p1_s, p2_s = pontos[i], pontos[i+1]
         p1_m, p2_m = p_min(p1_s), p_min(p2_s)
-        label = next((p['nome'] for p in pausas if p1_m >= p_min(p['ini']) and p2_m <= p_min(p['fim'])), None)
-        grade.append({'Horário': f"{p1_s} – {p2_s}", 'Minutos': 0 if label else p2_m - p1_m, 'Label': label})
+        
+        label = next((p['nome'] for p in pausas_v if p1_m >= p_min(p['ini']) and p2_m <= p_min(p['fim'])), None)
+        
+        if label:
+            grade.append({'Horário': f"{p1_s} – {p2_s}", 'Minutos': 0, 'Label': label})
+        else:
+            minutos_uteis = p2_m - p1_m
+            # Desconta o café internamente se ele ocorrer dentro deste bloco
+            for c in cafes:
+                c_ini, c_fim = p_min(c["ini"]), p_min(c["fim"])
+                # Se o intervalo do café intersecta o bloco atual, subtraímos a duração
+                if p1_m < c_fim and p2_m > c_ini:
+                    overlap = min(p2_m, c_fim) - max(p1_m, c_ini)
+                    minutos_uteis -= overlap
+            grade.append({'Horário': f"{p1_s} – {p2_s}", 'Minutos': max(0, minutos_uteis), 'Label': None})
     return grade
 
 # --- INTERFACE ---
@@ -91,7 +105,7 @@ if dados:
         column_config={"Modelo": st.column_config.SelectboxColumn("Modelo", options=[m['DISPLAY'] for m in dados], required=True),
                        "Quantidade": st.column_config.NumberColumn("Qtd", min_value=1)}, key=f"ed_{sel_upt}")
 
-    if st.button("🚀 Gerar Planejamento"):
+    if st.button("🚀 GERAR PLANEJAMENTO"):
         if not df_input.empty:
             grade_slots = gerar_grade(h_inicio, tem_gin)
             fila = []
@@ -99,7 +113,8 @@ if dados:
                 if row['Modelo']:
                     m_obj = next(m for m in dados if m['DISPLAY'] == row['Modelo'])
                     uh = m_obj['CAPACIDADES'].get(n_dia)
-                    if uh and uh > 0: fila.append({'ID': m_obj['ID'], 'UH': uh, 'T_PC': 60 / uh, 'Qtd': row['Quantidade']})
+                    if uh and uh > 0:
+                        fila.append({'ID': m_obj['ID'], 'UH': uh, 'T_PC': 60 / uh, 'Qtd': row['Quantidade']})
             
             if fila:
                 res, idx, acum, tot = [], 0, 0.0, 0
@@ -113,17 +128,18 @@ if dados:
                     p_bloco, mods_bloco = 0, []
                     while idx < len(fila):
                         item = fila[idx]
-                        if acum >= item['T_PC']:
-                            q = min(math.floor(acum / item['T_PC']), item['Qtd'])
+                        if acum >= (item['T_PC'] - 0.0001):
+                            q = min(math.floor(acum / item['T_PC'] + 0.0001), item['Qtd'])
                             if q > 0:
                                 acum -= (q * item['T_PC']); item['Qtd'] -= q
                                 p_bloco += q; tot += q
                                 info = f"{item['ID']} ({item['UH']} pç/h)"
                                 if info not in mods_bloco: mods_bloco.append(info)
                             if tot >= total_pecas and hora_termino == "":
-                                m_u = s['Minutos'] - acum
+                                min_u = s['Minutos'] - acum
                                 h_s, m_s = s['Horário'].split(' – ')[0].split(':')
-                                hora_termino = (datetime.strptime(f"{h_s}:{m_s}", "%H:%M") + timedelta(minutes=m_u)).strftime("%H:%M")
+                                dt_t = datetime.strptime(f"{h_s}:{m_s}", "%H:%M") + timedelta(minutes=min_u)
+                                hora_termino = dt_t.strftime("%H:%M")
                             if item['Qtd'] <= 0: idx += 1
                             else: break
                         else: break
@@ -135,4 +151,4 @@ if dados:
                 c2.metric("Término", hora_termino if hora_termino else "Fora do turno")
                 st.dataframe(pd.DataFrame(res), use_container_width=True)
 else:
-    st.warning("Aguardando planilha...")
+    st.warning("Verifique a planilha no Google Sheets.")
