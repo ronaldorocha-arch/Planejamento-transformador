@@ -6,17 +6,19 @@ from datetime import datetime, timedelta
 # Configuração da página
 st.set_page_config(page_title="Planejamento UPT - NHS", page_icon="⚡", layout="wide")
 
-# --- 1. CONFIGURAÇÃO DE GIDs ---
+# --- 1. CONFIGURAÇÃO DE GIDs (Atualizados conforme seus links) ---
 GIDS = {
     "UPT-01": "1479604323",
-    "UPT-02": "1369527749",
-    "UPT-03": "1940176840",
-    "UPT-04": "1346066224",
-    "UPT-05": "1734891122",
-    "UPT-06": "578135831",
-    "UPT-07": "1534015694",
+    "UPT-02": "110648652",
+    "UPT-03": "1141855262",
+    "UPT-04": "910246264",
+    "UPT-05": "1680061095",
+    "UPT-06": "747234832",
+    "UPT-07": "1486862820",
 }
 
+# Mapeamento das colunas de capacidade (N) conforme imagem 8282.png
+# Colunas: B=1(Modelo), C=2(Desc), D=3(N1), E=4(N2), F=5(N3), G=6(N4), H=7(N5)
 MAPA_N = {1: 3, 2: 4, 3: 5, 4: 6, 5: 7}
 
 @st.cache_data(ttl=20)
@@ -24,16 +26,27 @@ def carregar_dados_upt(upt_nome):
     gid = GIDS.get(upt_nome, "0")
     url = f"https://docs.google.com/spreadsheets/d/1A5Rnbey8-kfXRdP7vOIq4rS3DTQlERHItsS1gbg53W0/export?format=csv&gid={gid}"
     try:
+        # Lê a planilha pulando as 2 primeiras linhas (skiprows=2 para começar na linha 3)
         df_raw = pd.read_csv(url, header=None, skiprows=2).astype(str)
         lista_modelos = []
+        
         for i in range(len(df_raw)):
-            modelo = df_raw.iloc[i, 1].strip()
-            desc = df_raw.iloc[i, 2].strip()
+            modelo = df_raw.iloc[i, 1].strip() # Coluna B
+            desc = df_raw.iloc[i, 2].strip()   # Coluna C
+            
             if modelo != 'nan' and len(modelo) > 3:
-                caps = {n: pd.to_numeric(df_raw.iloc[i, col], errors='coerce') for n, col in MAPA_N.items()}
-                lista_modelos.append({'ID': modelo, 'CAPACIDADES': caps, 'DISPLAY': f"{modelo} - {desc}"})
+                # Armazena capacidades de N1 a N5
+                capacidades = {n: pd.to_numeric(df_raw.iloc[i, col], errors='coerce') for n, col in MAPA_N.items()}
+                
+                lista_modelos.append({
+                    'ID': modelo,
+                    'CAPACIDADES': capacidades,
+                    'DISPLAY': f"{modelo} - {desc}"
+                })
         return lista_modelos
-    except: return []
+    except Exception as e:
+        st.error(f"Erro ao conectar com a aba {upt_nome}: {e}")
+        return []
 
 def gerar_grade(h_ini_str, tem_ginastica):
     def p_min(h_s):
@@ -54,7 +67,6 @@ def gerar_grade(h_ini_str, tem_ginastica):
             grade.append({'Horário': f"{pontos[i]} – {pontos[i+1]}", 'Minutos': 0, 'Label': "🍱 ALMOÇO"})
         else:
             minutos_uteis = p2 - p1
-            # Desconto da Ginástica se estiver no intervalo
             if tem_ginastica and p1 <= m_gin_ini < p2:
                 minutos_uteis -= 10
             grade.append({'Horário': f"{pontos[i]} – {pontos[i+1]}", 'Minutos': minutos_uteis, 'Label': None})
@@ -65,7 +77,7 @@ st.sidebar.title("🏭 UPT - Planejamento")
 sel_upt = st.sidebar.selectbox("Setor", list(GIDS.keys()))
 n_dia = st.sidebar.select_slider("Quantidade de Pessoas (N)", options=[1, 2, 3, 4, 5], value=4)
 h_inicio = st.sidebar.text_input("Início da Produção", "07:45")
-tem_gin = st.sidebar.checkbox("Haverá Ginástica Laboral? (09:30)")
+tem_gin = st.sidebar.checkbox("Haverá Ginástica Laboral? (09:30)", value=False)
 
 dados = carregar_dados_upt(sel_upt)
 
@@ -91,7 +103,7 @@ if dados:
                     m_obj = next(m for m in dados if m['DISPLAY'] == row['Modelo'])
                     uh = m_obj['CAPACIDADES'].get(n_dia)
                     if pd.isna(uh) or uh <= 0:
-                        st.error(f"❌ Modelo {m_obj['ID']} sem Unidade/Hora para N={n_dia}!"); erro_unidade = True; break
+                        st.error(f"❌ O modelo {m_obj['ID']} não tem Unidade/Hora para N={n_dia}!"); erro_unidade = True; break
                     fila.append({'ID': m_obj['ID'], 'UH': uh, 'T_PC': 60 / uh, 'Qtd': row['Quantidade']})
             
             if not erro_unidade:
@@ -120,11 +132,11 @@ if dados:
                                     mods_bloco.append(item['ID'])
                                     uh_bloco.append(f"{item['ID']}: {item['UH']}pç/h")
                             
-                            # Cálculo do horário de término exato
+                            # Previsão de Término
                             if tot >= total_pecas_pedidas and hora_termino == "":
-                                min_passados = s['Minutos'] - acum
+                                min_restantes = s['Minutos'] - acum
                                 h_s, m_s = s['Horário'].split(' – ')[0].split(':')
-                                hora_termino = (datetime.strptime(f"{h_s}:{m_s}", "%H:%M") + timedelta(minutes=min_passados)).strftime("%H:%M")
+                                hora_termino = (datetime.strptime(f"{h_s}:{m_s}", "%H:%M") + timedelta(minutes=min_restantes)).strftime("%H:%M")
                             
                             if item['Qtd'] <= 0: idx += 1
                             else: break
@@ -146,4 +158,4 @@ if dados:
                 st.subheader("🗓️ Cronograma de Produção")
                 st.dataframe(pd.DataFrame(res), use_container_width=True)
 else:
-    st.error("Erro ao carregar dados. Verifique o compartilhamento da planilha.")
+    st.error("Erro ao carregar dados. Verifique o compartilhamento da planilha para 'Qualquer pessoa com o link'.")
