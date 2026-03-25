@@ -86,7 +86,7 @@ st.sidebar.title("🏭 Planejamento UPT")
 sel_upt = st.sidebar.selectbox("Setor", list(GIDS.keys()))
 n_dia = st.sidebar.select_slider("Pessoas (N)", options=[1, 2, 3, 4, 5, 6], value=4)
 h_inicio = st.sidebar.text_input("Início", "07:45")
-tem_gin = st.sidebar.checkbox("Descontar Ginástica? (09:30)", value=False)
+tem_gin = st.sidebar.checkbox("Descontar Ginástica?", value=False)
 
 dados = carregar_dados_upt(sel_upt)
 
