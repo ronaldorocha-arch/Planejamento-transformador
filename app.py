@@ -87,12 +87,12 @@ st.sidebar.title("🏭 Planejamento UPT")
 sel_upt = st.sidebar.selectbox("Setor", list(GIDS.keys()))
 n_dia = st.sidebar.select_slider("Pessoas (N)", options=[1, 2, 3, 4, 5, 6], value=4)
 h_inicio = st.sidebar.text_input("Início", "07:45")
-tem_gin = st.sidebar.checkbox("Descontar Ginástica?", value=False)
+tem_gin = st.sidebar.checkbox("Descontar Ginástica? (09:30)", value=False)
 
 dados = carregar_dados_upt(sel_upt)
 
 if dados:
-    st.markdown# E adicionado aqui no corpo principal
+    st.markdown("#### Tecnologia de Processos") # E adicionado aqui no corpo principal
     st.header(f"📋 Programação {sel_upt} | N={n_dia}")
     df_input = st.data_editor(pd.DataFrame(columns=["Modelo", "Quantidade"]), num_rows="dynamic", use_container_width=True,
         column_config={"Modelo": st.column_config.SelectboxColumn("Modelo", options=[m['DISPLAY'] for m in dados], required=True),
