@@ -52,15 +52,13 @@ def gerar_grade(h_ini_str, tem_gin):
     
     m_ini = p_min(h_ini_str)
     
-    # PAUSAS INVISÍVEIS (Descontam tempo no cálculo, mas não aparecem na tabela)
     pausas_ocultas = [
-        {"ini": "09:00", "fim": "09:10"}, # Café Manhã
-        {"ini": "15:00", "fim": "15:10"}  # Café Tarde
+        {"ini": "09:00", "fim": "09:10"}, 
+        {"ini": "15:00", "fim": "15:10"}
     ]
     if tem_gin:
-        pausas_ocultas.append({"ini": "09:30", "fim": "09:40"}) # Ginástica
+        pausas_ocultas.append({"ini": "09:30", "fim": "09:40"})
     
-    # ÚNICA PAUSA VISÍVEL
     pausa_visivel = {"nome": "🍱 ALMOÇO", "ini": "11:30", "fim": "12:30"}
     
     marcos_fixos = ["08:30", "09:30", "10:30", "11:30", "12:30", "13:30", "14:30", "15:30", "16:30", "17:30"]
@@ -71,12 +69,10 @@ def gerar_grade(h_ini_str, tem_gin):
         p1_s, p2_s = marcos_grade[i], marcos_grade[i+1]
         p1_m, p2_m = p_min(p1_s), p_min(p2_s)
         
-        # Verifica se o bloco atual é EXATAMENTE o almoço
         if p1_m >= p_min(pausa_visivel["ini"]) and p2_m <= p_min(pausa_visivel["fim"]):
             grade.append({'Horário': f"{p1_s} – {p2_s}", 'Minutos': 0, 'Label': pausa_visivel["nome"]})
         else:
             minutos_uteis = p2_m - p1_m
-            # Desconta cafés e ginástica internamente
             for po in pausas_ocultas:
                 po_ini, po_fim = p_min(po["ini"]), p_min(po["fim"])
                 if p1_m < po_fim and p2_m > po_ini:
@@ -90,7 +86,7 @@ st.sidebar.title("🏭 Planejamento UPT")
 sel_upt = st.sidebar.selectbox("Setor", list(GIDS.keys()))
 n_dia = st.sidebar.select_slider("Pessoas (N)", options=[1, 2, 3, 4, 5, 6], value=4)
 h_inicio = st.sidebar.text_input("Início", "07:45")
-tem_gin = st.sidebar.checkbox("Descontar Ginástica?", value=False)
+tem_gin = st.sidebar.checkbox("Descontar Ginástica? (09:30)", value=False)
 
 dados = carregar_dados_upt(sel_upt)
 
@@ -104,14 +100,21 @@ if dados:
         if not df_input.empty:
             grade_slots = gerar_grade(h_inicio, tem_gin)
             fila = []
+            erro_unidade = False
             for _, row in df_input.iterrows():
                 if row['Modelo']:
                     m_obj = next(m for m in dados if m['DISPLAY'] == row['Modelo'])
                     uh = m_obj['CAPACIDADES'].get(n_dia)
-                    if uh and uh > 0:
-                        fila.append({'ID': m_obj['ID'], 'UH': uh, 'T_PC': 60 / uh, 'Qtd': row['Quantidade']})
+                    
+                    # TRAVA DE SEGURANÇA: Se não tiver unidade hora, avisa e para tudo
+                    if pd.isna(uh) or uh is None or uh <= 0:
+                        st.error(f"⚠️ ERRO: O modelo **{m_obj['ID']}** não possui Unidade/Hora cadastrada para **N={n_dia}** na planilha. Verifique a aba {sel_upt}.")
+                        erro_unidade = True
+                        break
+                    
+                    fila.append({'ID': m_obj['ID'], 'UH': uh, 'T_PC': 60 / uh, 'Qtd': row['Quantidade']})
             
-            if fila:
+            if not erro_unidade and fila:
                 res, idx, acum, tot = [], 0, 0.0, 0
                 total_pecas = sum(item['Qtd'] for item in fila)
                 hora_termino = ""
@@ -132,10 +135,8 @@ if dados:
                                 if info not in mods_bloco: mods_bloco.append(info)
                             if tot >= total_pecas and hora_termino == "":
                                 min_u = (s['Minutos'] - acum) if s['Minutos'] > acum else s['Minutos']
-                                # Ajuste de offset se houver café/ginástica no meio do bloco final
                                 h_s, m_s = s['Horário'].split(' – ')[0].split(':')
                                 dt_t = datetime.strptime(f"{h_s}:{m_s}", "%H:%M") + timedelta(minutes=min_u)
-                                # Se o término cair exatamente durante uma pausa oculta, joga para o fim dela
                                 hora_termino = dt_t.strftime("%H:%M")
                             if item['Qtd'] <= 0: idx += 1
                             else: break
