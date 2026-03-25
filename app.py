@@ -37,7 +37,9 @@ def carregar_dados_upt(upt_nome):
                 capacidades = {}
                 for n_val, col_idx in MAPA_N.items():
                     if col_idx < num_cols:
-                        val = pd.to_numeric(df_raw.iloc[i, col_idx], errors='coerce')
+                        # AJUSTE AQUI: Substitui vírgula por ponto antes de converter para número
+                        val_str = df_raw.iloc[i, col_idx].replace(',', '.')
+                        val = pd.to_numeric(val_str, errors='coerce')
                         capacidades[n_val] = val
                     else:
                         capacidades[n_val] = None
@@ -122,7 +124,7 @@ if dados:
                             if q > 0:
                                 acum -= (q * item['T_PC']); item['Qtd'] -= q
                                 p_bloco += q; tot += q
-                                # AQUI: Juntamos Modelo + Unidade Hora
+                                # Juntamos Modelo + Unidade Hora (agora aceitando decimais)
                                 info_modelo = f"{item['ID']} ({item['UH']} pç/h)"
                                 if info_modelo not in mods_bloco: mods_bloco.append(info_modelo)
                             
