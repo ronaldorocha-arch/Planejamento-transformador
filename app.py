@@ -92,7 +92,7 @@ tem_gin = st.sidebar.checkbox("Descontar Ginástica?", value=False)
 dados = carregar_dados_upt(sel_upt)
 
 if dados:
-    st.markdown("#### Tecnologia de Processos") # E adicionado aqui no corpo principal
+    st.markdown# E adicionado aqui no corpo principal
     st.header(f"📋 Programação {sel_upt} | N={n_dia}")
     df_input = st.data_editor(pd.DataFrame(columns=["Modelo", "Quantidade"]), num_rows="dynamic", use_container_width=True,
         column_config={"Modelo": st.column_config.SelectboxColumn("Modelo", options=[m['DISPLAY'] for m in dados], required=True),
