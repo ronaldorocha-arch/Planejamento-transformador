@@ -52,40 +52,35 @@ def gerar_grade(h_ini_str, tem_gin):
     
     m_ini = p_min(h_ini_str)
     
-    # Pausas invisíveis (apenas descontam tempo)
-    cafes = [
-        {"ini": "09:00", "fim": "09:10"},
-        {"ini": "15:00", "fim": "15:10"}
+    # PAUSAS INVISÍVEIS (Descontam tempo no cálculo, mas não aparecem na tabela)
+    pausas_ocultas = [
+        {"ini": "09:00", "fim": "09:10"}, # Café Manhã
+        {"ini": "15:00", "fim": "15:10"}  # Café Tarde
     ]
-    
-    # Pausas visíveis na tabela
-    pausas_v = [{"nome": "🍱 ALMOÇO", "ini": "11:30", "fim": "12:30"}]
     if tem_gin:
-        pausas_v.append({"nome": "🤸 GINÁSTICA", "ini": "09:30", "fim": "09:40"})
+        pausas_ocultas.append({"ini": "09:30", "fim": "09:40"}) # Ginástica
     
-    marcos = ["08:30", "09:30", "10:30", "11:30", "12:30", "13:30", "14:30", "15:30", "16:30", "17:30"]
-    for p in pausas_v:
-        marcos.extend([p['ini'], p['fim']])
+    # ÚNICA PAUSA VISÍVEL
+    pausa_visivel = {"nome": "🍱 ALMOÇO", "ini": "11:30", "fim": "12:30"}
     
-    pontos = sorted(list(set([h_ini_str] + [m for m in marcos if p_min(m) > m_ini])), key=p_min)
+    marcos_fixos = ["08:30", "09:30", "10:30", "11:30", "12:30", "13:30", "14:30", "15:30", "16:30", "17:30"]
+    marcos_grade = sorted(list(set([h_ini_str] + [m for m in marcos_fixos if p_min(m) > m_ini])), key=p_min)
     
     grade = []
-    for i in range(len(pontos)-1):
-        p1_s, p2_s = pontos[i], pontos[i+1]
+    for i in range(len(marcos_grade)-1):
+        p1_s, p2_s = marcos_grade[i], marcos_grade[i+1]
         p1_m, p2_m = p_min(p1_s), p_min(p2_s)
         
-        label = next((p['nome'] for p in pausas_v if p1_m >= p_min(p['ini']) and p2_m <= p_min(p['fim'])), None)
-        
-        if label:
-            grade.append({'Horário': f"{p1_s} – {p2_s}", 'Minutos': 0, 'Label': label})
+        # Verifica se o bloco atual é EXATAMENTE o almoço
+        if p1_m >= p_min(pausa_visivel["ini"]) and p2_m <= p_min(pausa_visivel["fim"]):
+            grade.append({'Horário': f"{p1_s} – {p2_s}", 'Minutos': 0, 'Label': pausa_visivel["nome"]})
         else:
             minutos_uteis = p2_m - p1_m
-            # Desconta o café internamente se ele ocorrer dentro deste bloco
-            for c in cafes:
-                c_ini, c_fim = p_min(c["ini"]), p_min(c["fim"])
-                # Se o intervalo do café intersecta o bloco atual, subtraímos a duração
-                if p1_m < c_fim and p2_m > c_ini:
-                    overlap = min(p2_m, c_fim) - max(p1_m, c_ini)
+            # Desconta cafés e ginástica internamente
+            for po in pausas_ocultas:
+                po_ini, po_fim = p_min(po["ini"]), p_min(po["fim"])
+                if p1_m < po_fim and p2_m > po_ini:
+                    overlap = min(p2_m, po_fim) - max(p1_m, po_ini)
                     minutos_uteis -= overlap
             grade.append({'Horário': f"{p1_s} – {p2_s}", 'Minutos': max(0, minutos_uteis), 'Label': None})
     return grade
@@ -95,7 +90,7 @@ st.sidebar.title("🏭 Planejamento UPT")
 sel_upt = st.sidebar.selectbox("Setor", list(GIDS.keys()))
 n_dia = st.sidebar.select_slider("Pessoas (N)", options=[1, 2, 3, 4, 5, 6], value=4)
 h_inicio = st.sidebar.text_input("Início", "07:45")
-tem_gin = st.sidebar.checkbox("Ginástica Laboral?")
+tem_gin = st.sidebar.checkbox("Descontar Ginástica? (09:30)", value=False)
 
 dados = carregar_dados_upt(sel_upt)
 
@@ -136,9 +131,11 @@ if dados:
                                 info = f"{item['ID']} ({item['UH']} pç/h)"
                                 if info not in mods_bloco: mods_bloco.append(info)
                             if tot >= total_pecas and hora_termino == "":
-                                min_u = s['Minutos'] - acum
+                                min_u = (s['Minutos'] - acum) if s['Minutos'] > acum else s['Minutos']
+                                # Ajuste de offset se houver café/ginástica no meio do bloco final
                                 h_s, m_s = s['Horário'].split(' – ')[0].split(':')
                                 dt_t = datetime.strptime(f"{h_s}:{m_s}", "%H:%M") + timedelta(minutes=min_u)
+                                # Se o término cair exatamente durante uma pausa oculta, joga para o fim dela
                                 hora_termino = dt_t.strftime("%H:%M")
                             if item['Qtd'] <= 0: idx += 1
                             else: break
