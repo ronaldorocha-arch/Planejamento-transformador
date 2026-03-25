@@ -3,10 +3,10 @@ import pandas as pd
 import math
 from datetime import datetime, timedelta
 
-# Configuração da página para NHS UPT
+# Configuração da página
 st.set_page_config(page_title="Planejamento UPT - NHS", page_icon="⚡", layout="wide")
 
-# --- 1. CONFIGURAÇÃO DE GIDs (Extraídos dos seus links reais) ---
+# --- 1. CONFIGURAÇÃO DE GIDs (Atualizados conforme seus links) ---
 GIDS = {
     "UPT-01": "1479604323",
     "UPT-02": "110648652",
@@ -17,27 +17,35 @@ GIDS = {
     "UPT-07": "1486862820",
 }
 
-# Mapeamento dinâmico conforme sua planilha (B=Modelo, C=Desc, D=N1...)
+# Mapeamento das colunas de capacidade (N) conforme imagem 8282.png
+# Colunas: B=1(Modelo), C=2(Desc), D=3(N1), E=4(N2), F=5(N3), G=6(N4), H=7(N5)
 MAPA_N = {1: 3, 2: 4, 3: 5, 4: 6, 5: 7}
 
 @st.cache_data(ttl=20)
 def carregar_dados_upt(upt_nome):
     gid = GIDS.get(upt_nome, "0")
-    # URL de exportação para CSV com base no GID selecionado
     url = f"https://docs.google.com/spreadsheets/d/1A5Rnbey8-kfXRdP7vOIq4rS3DTQlERHItsS1gbg53W0/export?format=csv&gid={gid}"
     try:
-        # Pula as 2 primeiras linhas para iniciar na linha 3 dos dados
+        # Lê a planilha começando na linha 3 (skiprows=2)
         df_raw = pd.read_csv(url, header=None, skiprows=2).astype(str)
         lista_modelos = []
+        
         for i in range(len(df_raw)):
-            modelo = df_raw.iloc[i, 1].strip()
-            desc = df_raw.iloc[i, 2].strip()
+            modelo = df_raw.iloc[i, 1].strip() # Coluna B
+            desc = df_raw.iloc[i, 2].strip()   # Coluna C
+            
             if modelo != 'nan' and len(modelo) > 3:
-                # Captura capacidades para N de 1 a 5
-                caps = {n: pd.to_numeric(df_raw.iloc[i, col], errors='coerce') for n, col in MAPA_N.items()}
-                lista_modelos.append({'ID': modelo, 'CAPACIDADES': caps, 'DISPLAY': f"{modelo} - {desc}"})
+                # Armazena capacidades de N1 a N5
+                capacidades = {n: pd.to_numeric(df_raw.iloc[i, col], errors='coerce') for n, col in MAPA_N.items()}
+                
+                lista_modelos.append({
+                    'ID': modelo,
+                    'CAPACIDADES': capacidades,
+                    'DISPLAY': f"{modelo} - {desc}"
+                })
         return lista_modelos
-    except: return []
+    except Exception as e:
+        return None
 
 def gerar_grade(h_ini_str, tem_ginastica):
     def p_min(h_s):
@@ -48,7 +56,6 @@ def gerar_grade(h_ini_str, tem_ginastica):
     m_alm_ini, m_alm_fim = p_min("11:30"), p_min("12:30")
     m_gin_ini, m_gin_fim = p_min("09:30"), p_min("09:40")
     
-    # Marcadores de horas cheias para a tabela
     marcos = ["08:30", "09:30", "10:30", "11:30", "12:30", "13:30", "14:30", "15:30", "16:30", "17:30"]
     pontos = [h_ini_str] + [m for m in marcos if p_min(m) > m_ini]
     
@@ -59,25 +66,23 @@ def gerar_grade(h_ini_str, tem_ginastica):
             grade.append({'Horário': f"{pontos[i]} – {pontos[i+1]}", 'Minutos': 0, 'Label': "🍱 ALMOÇO"})
         else:
             minutos_uteis = p2 - p1
-            # Aplicação do desconto de Ginástica Laboral se ativa
             if tem_ginastica and p1 <= m_gin_ini < p2:
                 minutos_uteis -= 10
             grade.append({'Horário': f"{pontos[i]} – {pontos[i+1]}", 'Minutos': minutos_uteis, 'Label': None})
     return grade
 
-# --- INTERFACE LATERAL ---
-st.sidebar.title("🏭 Planejamento UPT")
-sel_upt = st.sidebar.selectbox("Selecionar Setor", list(GIDS.keys()))
+# --- INTERFACE ---
+st.sidebar.title("🏭 UPT - Planejamento")
+sel_upt = st.sidebar.selectbox("Setor", list(GIDS.keys()))
 n_dia = st.sidebar.select_slider("Quantidade de Pessoas (N)", options=[1, 2, 3, 4, 5], value=4)
 h_inicio = st.sidebar.text_input("Início da Produção", "07:45")
-tem_gin = st.sidebar.checkbox("Ginástica Laboral? (09:30 - 10min)", value=False)
+tem_gin = st.sidebar.checkbox("Haverá Ginástica Laboral? (09:30)", value=False)
 
 dados = carregar_dados_upt(sel_upt)
 
-if dados:
+if dados is not None:
     st.header(f"📋 Programação {sel_upt} | N={n_dia}")
     
-    # Editor de dados para entrada de Modelo e Quantidade
     df_input = st.data_editor(
         pd.DataFrame(columns=["Modelo", "Quantidade"]),
         num_rows="dynamic", use_container_width=True,
@@ -96,15 +101,16 @@ if dados:
                 if row['Modelo']:
                     m_obj = next(m for m in dados if m['DISPLAY'] == row['Modelo'])
                     uh = m_obj['CAPACIDADES'].get(n_dia)
-                    # Verifica se a Unidade/Hora está preenchida para o N selecionado
                     if pd.isna(uh) or uh <= 0:
-                        st.error(f"❌ O modelo {m_obj['ID']} está sem Unidade/Hora para N={n_dia}!"); erro_unidade = True; break
+                        st.error(f"❌ O modelo {m_obj['ID']} não tem Unidade/Hora para N={n_dia}!")
+                        erro_unidade = True
+                        break
                     fila.append({'ID': m_obj['ID'], 'UH': uh, 'T_PC': 60 / uh, 'Qtd': row['Quantidade']})
             
             if not erro_unidade:
                 res, idx, acum, tot = [], 0, 0.0, 0
                 total_pecas_total = sum(item['Qtd'] for item in fila)
-                hora_final = ""
+                hora_termino = ""
 
                 for s in grade_slots:
                     if s['Label']:
@@ -127,11 +133,11 @@ if dados:
                                     mods_bloco.append(item['ID'])
                                     uh_bloco.append(f"{item['ID']}: {item['UH']}pç/h")
                             
-                            # Cálculo preciso do horário de término
-                            if tot >= total_pecas_total and hora_final == "":
-                                minutos_gastos = s['Minutos'] - acum
-                                h_ref, m_ref = s['Horário'].split(' – ')[0].split(':')
-                                hora_final = (datetime.strptime(f"{h_ref}:{m_ref}", "%H:%M") + timedelta(minutes=minutos_gastos)).strftime("%H:%M")
+                            # Previsão de Término
+                            if tot >= total_pecas_total and hora_termino == "":
+                                min_usados = s['Minutos'] - acum
+                                h_s, m_s = s['Horário'].split(' – ')[0].split(':')
+                                hora_termino = (datetime.strptime(f"{h_s}:{m_s}", "%H:%M") + timedelta(minutes=min_usados)).strftime("%H:%M")
                             
                             if item['Qtd'] <= 0: idx += 1
                             else: break
@@ -146,10 +152,9 @@ if dados:
                     })
                 
                 st.divider()
-                # Exibição de Métricas no Topo
                 c1, c2 = st.columns(2)
                 c1.metric("Total Planejado", f"{tot} peças")
-                c2.metric("Previsão de Término", hora_final if hora_final else "Além do horário")
+                c2.metric("Previsão de Término", hora_termino if hora_termino else "Além das 17:30")
                 
                 st.subheader("🗓️ Cronograma de Produção")
                 st.dataframe(pd.DataFrame(res), use_container_width=True)
