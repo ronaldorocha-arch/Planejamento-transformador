@@ -3,10 +3,10 @@ import pandas as pd
 import math
 from datetime import datetime, timedelta
 
-# Configuração da página
+# Configuração da página NHS
 st.set_page_config(page_title="Planejamento UPT - NHS", page_icon="⚡", layout="wide")
 
-# --- 1. CONFIGURAÇÃO DE GIDs (Atualizados conforme seus links) ---
+# --- 1. CONFIGURAÇÃO DE GIDs (IDs das abas extraídos dos seus links) ---
 GIDS = {
     "UPT-01": "1479604323",
     "UPT-02": "110648652",
@@ -17,17 +17,18 @@ GIDS = {
     "UPT-07": "1486862820",
 }
 
-# Mapeamento das colunas de capacidade (N) conforme imagem 8282.png
-# Colunas: B=1(Modelo), C=2(Desc), D=3(N1), E=4(N2), F=5(N3), G=6(N4), H=7(N5)
+# Mapeamento: D=3(N1), E=4(N2), F=5(N3), G=6(N4), H=7(N5)
 MAPA_N = {1: 3, 2: 4, 3: 5, 4: 6, 5: 7}
 
-@st.cache_data(ttl=20)
+@st.cache_data(ttl=5) # Cache curto para facilitar a limpeza de erros
 def carregar_dados_upt(upt_nome):
     gid = GIDS.get(upt_nome, "0")
+    # URL de exportação direta
     url = f"https://docs.google.com/spreadsheets/d/1A5Rnbey8-kfXRdP7vOIq4rS3DTQlERHItsS1gbg53W0/export?format=csv&gid={gid}"
+    
     try:
-        # Lê a planilha começando na linha 3 (skiprows=2)
-        df_raw = pd.read_csv(url, header=None, skiprows=2).astype(str)
+        # Modo de leitura robusto para evitar erro 401/403
+        df_raw = pd.read_csv(url, header=None, skiprows=2, on_bad_lines='skip').astype(str)
         lista_modelos = []
         
         for i in range(len(df_raw)):
@@ -35,7 +36,7 @@ def carregar_dados_upt(upt_nome):
             desc = df_raw.iloc[i, 2].strip()   # Coluna C
             
             if modelo != 'nan' and len(modelo) > 3:
-                # Armazena capacidades de N1 a N5
+                # Extrai capacidades de N1 a N5
                 capacidades = {n: pd.to_numeric(df_raw.iloc[i, col], errors='coerce') for n, col in MAPA_N.items()}
                 
                 lista_modelos.append({
@@ -45,9 +46,10 @@ def carregar_dados_upt(upt_nome):
                 })
         return lista_modelos
     except Exception as e:
+        st.error(f"❌ Erro ao acessar a aba {upt_nome}. Verifique o compartilhamento da planilha. Detalhe: {e}")
         return None
 
-def gerar_grade(h_ini_str, tem_ginastica):
+def gerar_grade(h_ini_str, tem_gin):
     def p_min(h_s):
         h, m = map(int, h_s.split(':'))
         return h * 60 + m
@@ -65,34 +67,34 @@ def gerar_grade(h_ini_str, tem_ginastica):
         if p1 >= m_alm_ini and p2 <= m_alm_fim:
             grade.append({'Horário': f"{pontos[i]} – {pontos[i+1]}", 'Minutos': 0, 'Label': "🍱 ALMOÇO"})
         else:
-            minutos_uteis = p2 - p1
-            if tem_ginastica and p1 <= m_gin_ini < p2:
-                minutos_uteis -= 10
-            grade.append({'Horário': f"{pontos[i]} – {pontos[i+1]}", 'Minutos': minutos_uteis, 'Label': None})
+            minutos = p2 - p1
+            if tem_gin and p1 <= m_gin_ini < p2:
+                minutos -= 10
+            grade.append({'Horário': f"{pontos[i]} – {pontos[i+1]}", 'Minutos': minutos, 'Label': None})
     return grade
 
 # --- INTERFACE ---
-st.sidebar.title("🏭 UPT - Planejamento")
+st.sidebar.title("🏭 Planejamento UPT")
 sel_upt = st.sidebar.selectbox("Setor", list(GIDS.keys()))
-n_dia = st.sidebar.select_slider("Quantidade de Pessoas (N)", options=[1, 2, 3, 4, 5], value=4)
+n_dia = st.sidebar.select_slider("Pessoas na Linha (N)", options=[1, 2, 3, 4, 5], value=4)
 h_inicio = st.sidebar.text_input("Início da Produção", "07:45")
-tem_gin = st.sidebar.checkbox("Haverá Ginástica Laboral? (09:30)", value=False)
+tem_gin = st.sidebar.checkbox("Ginástica Laboral? (09:30)", value=False)
 
 dados = carregar_dados_upt(sel_upt)
 
-if dados is not None:
+if dados:
     st.header(f"📋 Programação {sel_upt} | N={n_dia}")
     
     df_input = st.data_editor(
         pd.DataFrame(columns=["Modelo", "Quantidade"]),
         num_rows="dynamic", use_container_width=True,
         column_config={
-            "Modelo": st.column_config.SelectboxColumn("Modelo", options=[m['DISPLAY'] for m in dados], required=True),
+            "Modelo": st.column_config.SelectboxColumn("Selecione o Modelo", options=[m['DISPLAY'] for m in dados], required=True),
             "Quantidade": st.column_config.NumberColumn("Qtd", min_value=1)
         }, key=f"ed_{sel_upt}"
     )
 
-    if st.button("🚀 Gerar Planejamento"):
+    if st.button("🚀 GERAR CRONOGRAMA"):
         if not df_input.empty:
             grade_slots = gerar_grade(h_inicio, tem_gin)
             fila, erro_unidade = [], False
@@ -102,9 +104,7 @@ if dados is not None:
                     m_obj = next(m for m in dados if m['DISPLAY'] == row['Modelo'])
                     uh = m_obj['CAPACIDADES'].get(n_dia)
                     if pd.isna(uh) or uh <= 0:
-                        st.error(f"❌ O modelo {m_obj['ID']} não tem Unidade/Hora para N={n_dia}!")
-                        erro_unidade = True
-                        break
+                        st.error(f"❌ Modelo {m_obj['ID']} sem Unidade/Hora para N={n_dia}!"); erro_unidade = True; break
                     fila.append({'ID': m_obj['ID'], 'UH': uh, 'T_PC': 60 / uh, 'Qtd': row['Quantidade']})
             
             if not erro_unidade:
@@ -153,10 +153,10 @@ if dados is not None:
                 
                 st.divider()
                 c1, c2 = st.columns(2)
-                c1.metric("Total Planejado", f"{tot} peças")
-                c2.metric("Previsão de Término", hora_termino if hora_termino else "Além das 17:30")
+                c1.metric("Total de Peças", f"{tot} pçs")
+                c2.metric("Previsão de Término", hora_termino if hora_termino else "Fim do turno")
                 
                 st.subheader("🗓️ Cronograma de Produção")
                 st.dataframe(pd.DataFrame(res), use_container_width=True)
 else:
-    st.error("Planilha inacessível. Certifique-se de que o compartilhamento está como 'Qualquer pessoa com o link'!")
+    st.info("Aguardando carregamento da planilha. Certifique-se de que o acesso está público.")
