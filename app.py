@@ -17,8 +17,7 @@ GIDS = {
     "UPT-07": "1486862820",
 }
 
-# Mapeamento atualizado conforme imagem 'a.png': 
-# D=3(N1), E=4(N2), F=5(N3), G=6(N4), H=7(N5), I=8(N6)
+# Mapeamento: D=3(N1), E=4(N2), F=5(N3), G=6(N4), H=7(N5), I=8(N6)
 MAPA_N = {1: 3, 2: 4, 3: 5, 4: 6, 5: 7, 6: 8}
 
 @st.cache_data(ttl=20)
@@ -26,20 +25,18 @@ def carregar_dados_upt(upt_nome):
     gid = GIDS.get(upt_nome, "0")
     url = f"https://docs.google.com/spreadsheets/d/1A5Rnbey8-kfXRdP7vOIq4rS3DTQlERHItsS1gbg53W0/export?format=csv&gid={gid}"
     try:
-        # skiprows=2 para começar os dados na linha 3 (abaixo do cabeçalho)
         df_raw = pd.read_csv(url, header=None, skiprows=2).astype(str)
         lista_modelos = []
-        num_cols_planilha = df_raw.shape[1]
+        num_cols = df_raw.shape[1]
         
         for i in range(len(df_raw)):
-            modelo = df_raw.iloc[i, 1].strip() # Coluna B
-            desc = df_raw.iloc[i, 2].strip()   # Coluna C
+            modelo = df_raw.iloc[i, 1].strip()
+            desc = df_raw.iloc[i, 2].strip()
             
             if modelo != 'nan' and len(modelo) > 3:
                 capacidades = {}
                 for n_val, col_idx in MAPA_N.items():
-                    # Verifica se a coluna existe na aba para evitar erro 'out of bounds'
-                    if col_idx < num_cols_planilha:
+                    if col_idx < num_cols:
                         val = pd.to_numeric(df_raw.iloc[i, col_idx], errors='coerce')
                         capacidades[n_val] = val
                     else:
@@ -51,8 +48,7 @@ def carregar_dados_upt(upt_nome):
                     'DISPLAY': f"{modelo} - {desc}"
                 })
         return lista_modelos
-    except Exception as e:
-        st.error(f"Erro ao conectar com a aba {upt_nome}: {e}")
+    except:
         return None
 
 def gerar_grade(h_ini_str, tem_gin):
@@ -86,12 +82,11 @@ dados = carregar_dados_upt(sel_upt)
 
 if dados:
     st.header(f"📋 Programação {sel_upt} | N={n_dia}")
-    opcoes = [m['DISPLAY'] for m in dados]
     df_input = st.data_editor(
         pd.DataFrame(columns=["Modelo", "Quantidade"]),
         num_rows="dynamic", use_container_width=True,
         column_config={
-            "Modelo": st.column_config.SelectboxColumn("Modelo", options=opcoes, required=True),
+            "Modelo": st.column_config.SelectboxColumn("Modelo", options=[m['DISPLAY'] for m in dados], required=True),
             "Quantidade": st.column_config.NumberColumn("Qtd", min_value=1)
         }, key=f"ed_{sel_upt}"
     )
@@ -107,8 +102,7 @@ if dados:
                     uh = m_obj['CAPACIDADES'].get(n_dia)
                     if pd.isna(uh) or uh is None or uh <= 0:
                         st.error(f"❌ Modelo {m_obj['ID']} sem Unidade/Hora para N={n_dia}!")
-                        erro_unidade = True
-                        break
+                        erro_unidade = True; break
                     fila.append({'ID': m_obj['ID'], 'UH': uh, 'T_PC': 60 / uh, 'Qtd': row['Quantidade']})
             
             if not erro_unidade:
@@ -117,10 +111,10 @@ if dados:
                 hora_termino = ""
                 for s in grade_slots:
                     if s['Label']:
-                        res.append({'Horário': s['Horário'], 'Modelos': s['Label'], 'Unid/h': '-', 'Peças': 0, 'Acum.': tot})
+                        res.append({'Horário': s['Horário'], 'Modelos': s['Label'], 'Peças': 0, 'Acum.': tot})
                         continue
                     acum += s['Minutos']
-                    p_bloco, mods_bloco, uh_info = 0, [], []
+                    p_bloco, mods_bloco = 0, []
                     while idx < len(fila):
                         item = fila[idx]
                         if acum >= item['T_PC']:
@@ -128,9 +122,10 @@ if dados:
                             if q > 0:
                                 acum -= (q * item['T_PC']); item['Qtd'] -= q
                                 p_bloco += q; tot += q
-                                if item['ID'] not in mods_bloco: 
-                                    mods_bloco.append(item['ID'])
-                                    uh_info.append(f"{item['ID']}: {item['UH']}pç/h")
+                                # AQUI: Juntamos Modelo + Unidade Hora
+                                info_modelo = f"{item['ID']} ({item['UH']} pç/h)"
+                                if info_modelo not in mods_bloco: mods_bloco.append(info_modelo)
+                            
                             if tot >= total_pecas and hora_termino == "":
                                 min_u = s['Minutos'] - acum
                                 h_s, m_s = s['Horário'].split(' – ')[0].split(':')
@@ -141,7 +136,6 @@ if dados:
                     res.append({
                         'Horário': s['Horário'], 
                         'Modelos': " + ".join(mods_bloco) if mods_bloco else "-", 
-                        'Unid/h': " | ".join(uh_info) if uh_info else "-",
                         'Peças': int(p_bloco), 
                         'Acum.': int(tot)
                     })
@@ -152,4 +146,4 @@ if dados:
                 c2.metric("Previsão de Término", hora_termino if hora_termino else "Fora do turno")
                 st.dataframe(pd.DataFrame(res), use_container_width=True)
 else:
-    st.warning("Verifique se a planilha está como 'Qualquer pessoa com o link' e se as colunas de N1 a N6 existem.")
+    st.warning("Verifique o compartilhamento da planilha no Google Sheets.")
