@@ -45,12 +45,13 @@ def carregar_dados_upt(upt_nome):
     except:
         return None
 
-def gerar_grade(h_ini_str, tem_gin):
+def gerar_grade(h_ini_str, h_fim_str, tem_gin):
     def p_min(h_s):
         h, m = map(int, h_s.split(':'))
         return h * 60 + m
     
     m_ini = p_min(h_ini_str)
+    m_fim_turno = p_min(h_fim_str)
     
     pausas_ocultas = [
         {"ini": "09:00", "fim": "09:10"}, 
@@ -61,8 +62,17 @@ def gerar_grade(h_ini_str, tem_gin):
     
     pausa_visivel = {"nome": "🍱 ALMOÇO", "ini": "11:30", "fim": "12:30"}
     
-    marcos_fixos = ["08:30", "09:30", "10:30", "11:30", "12:30", "13:30", "14:30", "15:30", "16:30", "17:30"]
-    marcos_grade = sorted(list(set([h_ini_str] + [m for m in marcos_fixos if p_min(m) > m_ini])), key=p_min)
+    # Marcos fixos baseados na hora cheia, mas limitados pelo fim do turno
+    marcos_base = ["08:30", "09:30", "10:30", "11:30", "12:30", "13:30", "14:30", "15:30", "16:30", "17:30"]
+    marcos_filtrados = [m for m in marcos_base if m_ini < p_min(m) < m_fim_turno]
+    
+    # Adiciona as bordas das pausas visíveis se estiverem no turno
+    if m_ini < p_min(pausa_visivel["ini"]) < m_fim_turno:
+        marcos_filtrados.append(pausa_visivel["ini"])
+    if m_ini < p_min(pausa_visivel["fim"]) < m_fim_turno:
+        marcos_filtrados.append(pausa_visivel["fim"])
+
+    marcos_grade = sorted(list(set([h_ini_str] + marcos_filtrados + [h_fim_str])), key=p_min)
     
     grade = []
     for i in range(len(marcos_grade)-1):
@@ -86,7 +96,11 @@ st.sidebar.markdown("### Tecnologia de Processos")
 st.sidebar.title("🏭 Planejamento UPT")
 sel_upt = st.sidebar.selectbox("Setor", list(GIDS.keys()))
 n_dia = st.sidebar.select_slider("Pessoas (N)", options=[1, 2, 3, 4, 5, 6], value=4)
-h_inicio = st.sidebar.text_input("Início", "07:45")
+
+col_h1, col_h2 = st.sidebar.columns(2)
+h_inicio = col_h1.text_input("Início Turno", "07:45")
+h_fim = col_h2.text_input("Fim Turno", "17:30")
+
 tem_gin = st.sidebar.checkbox("Descontar Ginástica?", value=False)
 
 dados = carregar_dados_upt(sel_upt)
@@ -99,19 +113,17 @@ if dados:
 
     if st.button("🚀 GERAR PLANEJAMENTO"):
         if not df_input.empty:
-            grade_slots = gerar_grade(h_inicio, tem_gin)
+            grade_slots = gerar_grade(h_inicio, h_fim, tem_gin)
             fila = []
             erro_unidade = False
             for _, row in df_input.iterrows():
                 if row['Modelo']:
                     m_obj = next(m for m in dados if m['DISPLAY'] == row['Modelo'])
                     uh = m_obj['CAPACIDADES'].get(n_dia)
-                    
                     if pd.isna(uh) or uh is None or uh <= 0:
-                        st.error(f"⚠️ ERRO: O modelo **{m_obj['ID']}** não possui Unidade/Hora cadastrada para **N={n_dia}** na planilha. Verifique a aba {sel_upt}.")
+                        st.error(f"⚠️ ERRO: O modelo **{m_obj['ID']}** não possui Unidade/Hora para **N={n_dia}**.")
                         erro_unidade = True
                         break
-                    
                     fila.append({'ID': m_obj['ID'], 'UH': uh, 'T_PC': 60 / uh, 'Qtd': row['Quantidade']})
             
             if not erro_unidade and fila:
@@ -131,7 +143,6 @@ if dados:
                             if q > 0:
                                 acum -= (q * item['T_PC']); item['Qtd'] -= q
                                 p_bloco += q; tot += q
-                                # DETALHAMENTO: Agora mostra a quantidade de peças de cada modelo no bloco
                                 info = f"{int(q)}pç {item['ID']} ({item['UH']} pç/h)"
                                 mods_bloco.append(info)
                             if tot >= total_pecas_total and hora_termino == "":
@@ -146,8 +157,15 @@ if dados:
                 
                 st.divider()
                 c1, c2 = st.columns(2)
-                c1.metric("Total", f"{tot} peças")
-                c2.metric("Término", hora_termino if hora_termino else "Fora do turno")
+                c1.metric("Total Produzido", f"{tot} peças")
+                
+                # Alerta se a produção não couber no tempo
+                if tot < total_pecas_total:
+                    c2.subheader(f"⚠️ Término: {hora_termino if hora_termino else 'Além do Turno'}")
+                    st.error(f"Atenção: Com o fim do turno às {h_fim}, faltaram {int(total_pecas_total - tot)} peças!")
+                else:
+                    c2.metric("Término Previsto", hora_termino)
+                
                 st.dataframe(pd.DataFrame(res), use_container_width=True)
 else:
     st.warning("Verifique a planilha no Google Sheets.")
