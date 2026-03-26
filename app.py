@@ -82,17 +82,16 @@ def gerar_grade(h_ini_str, tem_gin):
     return grade
 
 # --- INTERFACE ---
-st.sidebar.markdown("### Tecnologia de Processos") # Adicionado aqui
+st.sidebar.markdown("### Tecnologia de Processos")
 st.sidebar.title("🏭 Planejamento UPT")
 sel_upt = st.sidebar.selectbox("Setor", list(GIDS.keys()))
 n_dia = st.sidebar.select_slider("Pessoas (N)", options=[1, 2, 3, 4, 5, 6], value=4)
 h_inicio = st.sidebar.text_input("Início", "07:45")
-tem_gin = st.sidebar.checkbox("Descontar Ginástica?", value=False)
+tem_gin = st.sidebar.checkbox("Descontar Ginástica? (09:30)", value=False)
 
 dados = carregar_dados_upt(sel_upt)
 
 if dados:
-    st.markdown("#### Tecnologia de Processos") # E adicionado aqui no corpo principal
     st.header(f"📋 Programação {sel_upt} | N={n_dia}")
     df_input = st.data_editor(pd.DataFrame(columns=["Modelo", "Quantidade"]), num_rows="dynamic", use_container_width=True,
         column_config={"Modelo": st.column_config.SelectboxColumn("Modelo", options=[m['DISPLAY'] for m in dados], required=True),
@@ -117,7 +116,7 @@ if dados:
             
             if not erro_unidade and fila:
                 res, idx, acum, tot = [], 0, 0.0, 0
-                total_pecas = sum(item['Qtd'] for item in fila)
+                total_pecas_total = sum(item['Qtd'] for item in fila)
                 hora_termino = ""
                 for s in grade_slots:
                     if s['Label']:
@@ -132,9 +131,10 @@ if dados:
                             if q > 0:
                                 acum -= (q * item['T_PC']); item['Qtd'] -= q
                                 p_bloco += q; tot += q
-                                info = f"{item['ID']} ({item['UH']} pç/h)"
-                                if info not in mods_bloco: mods_bloco.append(info)
-                            if tot >= total_pecas and hora_termino == "":
+                                # DETALHAMENTO: Agora mostra a quantidade de peças de cada modelo no bloco
+                                info = f"{int(q)}pç {item['ID']} ({item['UH']} pç/h)"
+                                mods_bloco.append(info)
+                            if tot >= total_pecas_total and hora_termino == "":
                                 min_u = (s['Minutos'] - acum) if s['Minutos'] > acum else s['Minutos']
                                 h_s, m_s = s['Horário'].split(' – ')[0].split(':')
                                 dt_t = datetime.strptime(f"{h_s}:{m_s}", "%H:%M") + timedelta(minutes=min_u)
