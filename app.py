@@ -106,7 +106,7 @@ if dados:
             
             if not erro_n and fila:
                 res, idx, acum, tot, h_term = [], 0, 0.0, 0, ""
-                total_pecas = sum(item['Qtd'] for item in fila)
+                total_solicitado = sum(item['Qtd'] for item in fila)
                 for s in grade_slots:
                     if s['Label']:
                         res.append({'Horário': s['Horário'], 'Modelos': s['Label'], 'Peças': 0, 'Acum.': tot})
@@ -121,7 +121,7 @@ if dados:
                                 acum -= (q * item['T_PC']); item['Qtd'] -= q
                                 p_bloco += q; tot += q
                                 mods.append(f"{int(q)}pç {item['ID']}")
-                            if tot >= total_pecas and h_term == "":
+                            if tot >= total_solicitado and h_term == "":
                                 h_s, m_s = s['Horário'].split(' – ')[0].split(':')
                                 t_at = datetime.strptime(f"{h_s}:{m_s}", "%H:%M") + timedelta(minutes=(s['Minutos']-acum))
                                 h_term = t_at.strftime("%H:%M")
@@ -131,7 +131,12 @@ if dados:
                     res.append({'Horário': s['Horário'], 'Modelos': " + ".join(mods) if mods else "-", 'Peças': int(p_bloco), 'Acum.': int(tot)})
                 
                 st.divider()
-                st.metric("Total Produzido", f"{int(tot)} peças", delta=f"Término: {h_term}")
+                # AVISO DE TÉRMINO NÃO CONCLUÍDO
+                if tot < total_solicitado:
+                    st.error(f"⚠️ ATENÇÃO: A produção NÃO será finalizada no turno! Faltaram {int(total_solicitado - tot)} peças. Turno encerrado às {h_fim}.")
+                    st.metric("Total Produzido", f"{int(tot)} / {int(total_solicitado)} peças", delta="Incompleto", delta_color="inverse")
+                else:
+                    st.metric("Total Produzido", f"{int(tot)} peças", delta=f"Finalizado às: {h_term}")
                 
                 def style_almoco(row):
                     return ['background-color: #fff3cd'] * len(row) if "ALMOÇO" in str(row["Modelos"]) else [''] * len(row)
